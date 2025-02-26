@@ -1,0 +1,126 @@
+blueprint:
+  name: Boiler, Thermostats, TRV's and Windows
+  description: "Control of boiler, based on individual room setpoints, TRV's and widow sensor"
+  domain: automation
+
+  input:
+    relay:
+      name: Releu Centrală
+      description: "Selectează releul care pornește/oprește centrala."
+      selector:
+        entity:
+          domain: switch
+
+    thermostats:
+      name: Termostate
+      description: "Selectează termostatele care controlează centrala și TRV-urile."
+      selector:
+        entity:
+          domain: climate
+          multiple: true
+
+    trvs:
+      name: TRV-uri asociate
+      description: "Lista de TRV-uri (number) asociate fiecărui termostat, în ordinea corespunzătoare."
+      selector:
+        entity:
+          domain: number
+          multiple: true
+
+    window_sensors:
+      name: Senzori de Geam
+      description: "Lista senzorilor de geam (binary_sensor), în ordinea corespunzătoare fiecărui termostat."
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: true
+
+mode: restart
+
+variables:
+  thermostat_entities: !input thermostats
+  trv_entities: !input trvs
+  window_sensors: !input window_sensors
+  relay_entity: !input relay
+
+trigger:
+  - platform: state
+    entity_id: !input thermostats
+    attribute: hvac_action
+
+  - platform: state
+    entity_id: !input window_sensors
+
+action:
+  - variables:
+      heating_active: >
+        {{ 'heating' in 
+          expand(thermostat_entities) | map(attribute='attributes.hvac_action') | list 
+        }}
+
+  ## 🔥 Boiler Control
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ heating_active }}"
+        sequence:
+          - service: switch.turn_on
+            target:
+              entity_id: "{{ relay_entity }}"
+      - conditions:
+          - condition: template
+            value_template: "{{ not heating_active }}"
+        sequence:
+          - service: switch.turn_off
+            target:
+              entity_id: "{{ relay_entity }}"
+
+  ## 🔄 TRV's and Thermostats
+  - repeat:
+      count: "{{ thermostat_entities | count }}"
+      sequence:
+        - variables:
+            current_thermostat: "{{ thermostat_entities[repeat.index - 1] }}"
+            current_trv: "{{ trv_entities[repeat.index - 1] }}"
+            current_window_sensor: "{{ window_sensors[repeat.index - 1] }}"
+            thermostat_state: "{{ state_attr(current_thermostat, 'hvac_action') }}"
+            window_open: "{{ is_state(current_window_sensor, 'on') }}"
+
+        ## 🏠 Window Open - Close Thermostat
+        - choose:
+            - conditions:
+                - condition: template
+                  value_template: "{{ window_open }}"
+              sequence:
+                - service: climate.turn_off
+                  target:
+                    entity_id: "{{ current_thermostat }}"
+
+        ## 🏠 Window Closed - Set Thermostat to Heat
+            - conditions:
+                - condition: template
+                  value_template: "{{ not window_open }}"
+              sequence:
+                - service: climate.set_hvac_mode
+                  target:
+                    entity_id: "{{ current_thermostat }}"
+                  data:
+                    hvac_mode: "heat"
+
+                - choose:
+                    - conditions:
+                        - condition: template
+                          value_template: "{{ thermostat_state == 'heating' }}"
+                      sequence:
+                        - service: number.set_value
+                          data:
+                            entity_id: "{{ current_trv }}"
+                            value: 100
+                    - conditions:
+                        - condition: template
+                          value_template: "{{ thermostat_state == 'idle' }}"
+                      sequence:
+                        - service: number.set_value
+                          data:
+                            entity_id: "{{ current_trv }}"
+                            value: 5
