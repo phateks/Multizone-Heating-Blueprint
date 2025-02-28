@@ -1,0 +1,150 @@
+blueprint:
+  name: Boiler, Thermostats, TRV's and Windows
+  description: "Control of boiler setpoint based on individual room thermostats and windows."
+  domain: automation
+
+  input:
+    boiler_setpoint:
+      name: Boiler Setpoint Control
+      description: "Selectează entitatea care controlează temperatura de flux a centralei."
+      selector:
+        entity:
+          domain: number
+
+    thermostats:
+      name: Termostate
+      description: "Selectează termostatele care controlează centrala și TRV-urile."
+      selector:
+        entity:
+          domain: climate
+          multiple: true
+
+    trvs:
+      name: TRV-uri asociate
+      description: "Lista de TRV-uri (number) asociate fiecărui termostat, în ordinea corespunzătoare."
+      selector:
+        entity:
+          domain: number
+          multiple: true
+
+    window_sensors:
+      name: Senzori de Geam
+      description: "Lista senzorilor de geam (binary_sensor), în ordinea corespunzătoare fiecărui termostat."
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: true
+
+    heating_temperature:
+      name: Temperatură încălzire
+      description: "Setează temperatura centralei când încălzirea este activă."
+      selector:
+        number:
+          min: 30
+          max: 80
+          unit_of_measurement: "°C"
+
+    idle_temperature:
+      name: Temperatură idle
+      description: "Setează temperatura centralei când toate termostatele sunt idle."
+      selector:
+        number:
+          min: 30
+          max: 80
+          unit_of_measurement: "°C"
+
+mode: restart
+
+variables:
+  thermostat_entities: !input thermostats
+  trv_entities: !input trvs
+  window_sensors: !input window_sensors
+  boiler_setpoint_entity: !input boiler_setpoint
+  heating_temp: !input heating_temperature
+  idle_temp: !input idle_temperature
+
+trigger:
+  - platform: state
+    entity_id: !input thermostats
+    attribute: hvac_action
+
+  - platform: state
+    entity_id: !input window_sensors
+
+action:
+  - variables:
+      heating_active: >
+        {{ 'heating' in 
+          expand(thermostat_entities) | map(attribute='attributes.hvac_action') | list 
+        }}
+
+  ## 🔥 Boiler Setpoint Control
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ heating_active }}"
+        sequence:
+          - service: number.set_value
+            target:
+              entity_id: "{{ boiler_setpoint_entity }}"
+            data:
+              value: "{{ heating_temp }}"
+      - conditions:
+          - condition: template
+            value_template: "{{ not heating_active }}"
+        sequence:
+          - service: number.set_value
+            target:
+              entity_id: "{{ boiler_setpoint_entity }}"
+            data:
+              value: "{{ idle_temp }}"
+
+  ## 🔄 TRV's and Thermostats
+  - repeat:
+      count: "{{ thermostat_entities | count }}"
+      sequence:
+        - variables:
+            current_thermostat: "{{ thermostat_entities[repeat.index - 1] }}"
+            current_trv: "{{ trv_entities[repeat.index - 1] }}"
+            current_window_sensor: "{{ window_sensors[repeat.index - 1] }}"
+            thermostat_state: "{{ state_attr(current_thermostat, 'hvac_action') }}"
+            window_open: "{{ is_state(current_window_sensor, 'on') }}"
+
+        ## 🏠 Window Open - Close Thermostat
+        - choose:
+            - conditions:
+                - condition: template
+                  value_template: "{{ window_open }}"
+              sequence:
+                - service: climate.turn_off
+                  target:
+                    entity_id: "{{ current_thermostat }}"
+
+        ## 🏠 Window Closed - Set Thermostat to Heat
+            - conditions:
+                - condition: template
+                  value_template: "{{ not window_open }}"
+              sequence:
+                - service: climate.set_hvac_mode
+                  target:
+                    entity_id: "{{ current_thermostat }}"
+                  data:
+                    hvac_mode: "heat"
+
+                - choose:
+                    - conditions:
+                        - condition: template
+                          value_template: "{{ thermostat_state == 'heating' }}"
+                      sequence:
+                        - service: number.set_value
+                          data:
+                            entity_id: "{{ current_trv }}"
+                            value: 100
+                    - conditions:
+                        - condition: template
+                          value_template: "{{ thermostat_state == 'idle' }}"
+                      sequence:
+                        - service: number.set_value
+                          data:
+                            entity_id: "{{ current_trv }}"
+                            value: 5
