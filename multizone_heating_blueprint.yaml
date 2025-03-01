@@ -5,23 +5,23 @@ blueprint:
 
   input:
     relay:
-      name: Releu Centrală
-      description: "Selectează releul care pornește/oprește centrala."
+      name: Boiler Relay Switch
+      description: "Select your boiler relay switch"
       selector:
         entity:
           domain: switch
 
     thermostats:
-      name: Termostate
-      description: "Selectează termostatele care controlează centrala și TRV-urile."
+      name: Room Thermostats
+      description: "Select Room Thermostat"
       selector:
         entity:
           domain: climate
           multiple: true
 
     trvs:
-      name: TRV-uri asociate
-      description: "Lista de TRV-uri (number) asociate fiecărui termostat, în ordinea corespunzătoare."
+      name: Thermostat Radiator Valve
+      description: "Select opening degree enitity of the room's TRV"
       selector:
         entity:
           domain: number
@@ -29,7 +29,7 @@ blueprint:
 
     window_sensors:
       name: Senzori de Geam
-      description: "Lista senzorilor de geam (binary_sensor), în ordinea corespunzătoare fiecărui termostat."
+      description: "Window Sensor Of the Room"
       selector:
         entity:
           domain: binary_sensor
